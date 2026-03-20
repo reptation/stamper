@@ -81,91 +81,123 @@ func TestReadyReportsBundleVersionAfterLoad(t *testing.T) {
 	}
 }
 
-func TestRunLifecycleAPI(t *testing.T) {
-	store, err := storage.Open(filepath.Join(t.TempDir(), "stamper.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	defer store.Close()
+func TestCreateRunSuccess(t *testing.T) {
+	server := newTestServer(t)
 
-	server := NewServer(store)
-
-	createReq := httptest.NewRequest(http.MethodPost, "/v1/runs", bytes.NewBufferString(`{
+	rec := performRequest(t, server, http.MethodPost, "/v1/runs", `{
 		"agent_id":"hermes-ops-agent",
 		"environment":"prod",
 		"task":"Fetch customer data"
-	}`))
-	createRec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(createRec, createReq)
+	}`)
 
-	if createRec.Code != http.StatusCreated {
-		t.Fatalf("expected create status 201, got %d", createRec.Code)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var createBody struct {
+	var body struct {
 		RunID string `json:"run_id"`
 	}
-	if err := json.Unmarshal(createRec.Body.Bytes(), &createBody); err != nil {
-		t.Fatalf("unmarshal create response: %v", err)
-	}
-	if createBody.RunID == "" {
-		t.Fatal("expected run_id in create response")
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
 	}
 
-	appendEvent := func(body string) {
-		t.Helper()
-		req := httptest.NewRequest(
-			http.MethodPost,
-			"/v1/runs/"+createBody.RunID+"/events",
-			bytes.NewBufferString(body),
-		)
-		rec := httptest.NewRecorder()
-		server.Handler().ServeHTTP(rec, req)
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("expected append status 201, got %d body=%s", rec.Code, rec.Body.String())
-		}
+	if body.RunID == "" {
+		t.Fatal("expected run_id in response")
+	}
+}
+
+func TestAppendEventSuccess(t *testing.T) {
+	server := newTestServer(t)
+	runID := createRun(t, server)
+
+	rec := performRequest(t, server, http.MethodPost, "/v1/runs/"+runID+"/events", `{
+		"event_type":"tool_call",
+		"payload":{"tool_name":"http_request"}
+	}`)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	appendEvent(`{"event_type":"reasoning","payload":{"step":"plan"}}`)
-	appendEvent(`{"event_type":"tool_call","payload":{"tool_name":"http_request"}}`)
-	appendEvent(`{"event_type":"policy_decision","payload":{"decision":"deny"}}`)
-	appendEvent(`{"event_type":"execution_blocked","payload":{"reason":"policy"}}`)
-
-	finishReq := httptest.NewRequest(
-		http.MethodPost,
-		"/v1/runs/"+createBody.RunID+"/finish",
-		bytes.NewBufferString(`{"status":"failed","output_summary":"Blocked by policy"}`),
-	)
-	finishRec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(finishRec, finishReq)
-	if finishRec.Code != http.StatusOK {
-		t.Fatalf("expected finish status 200, got %d body=%s", finishRec.Code, finishRec.Body.String())
+	var body storage.Event
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
 	}
 
-	getReq := httptest.NewRequest(http.MethodGet, "/v1/runs/"+createBody.RunID, nil)
-	getRec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(getRec, getReq)
-	if getRec.Code != http.StatusOK {
-		t.Fatalf("expected get status 200, got %d body=%s", getRec.Code, getRec.Body.String())
+	if body.RunID != runID {
+		t.Fatalf("expected run_id %q, got %q", runID, body.RunID)
+	}
+	if body.Sequence != 1 {
+		t.Fatalf("expected sequence 1, got %d", body.Sequence)
+	}
+	if body.EventType != "tool_call" {
+		t.Fatalf("expected event_type tool_call, got %q", body.EventType)
+	}
+}
+
+func TestFinishRunSuccess(t *testing.T) {
+	server := newTestServer(t)
+	runID := createRun(t, server)
+
+	rec := performRequest(t, server, http.MethodPost, "/v1/runs/"+runID+"/finish", `{
+		"status":"failed",
+		"output_summary":"Blocked by policy"
+	}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var getBody struct {
+	var body map[string]bool
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if !body["ok"] {
+		t.Fatal("expected ok=true in response")
+	}
+}
+
+func TestGetRunDetailReturnsOrderedEvents(t *testing.T) {
+	server := newTestServer(t)
+	runID := createRun(t, server)
+
+	performRequest(t, server, http.MethodPost, "/v1/runs/"+runID+"/events", `{
+		"event_type":"tool_call",
+		"payload":{"tool_name":"http_request"}
+	}`)
+	performRequest(t, server, http.MethodPost, "/v1/runs/"+runID+"/events", `{
+		"event_type":"execution_result",
+		"payload":{"ok":true}
+	}`)
+	performRequest(t, server, http.MethodPost, "/v1/runs/"+runID+"/finish", `{
+		"status":"completed",
+		"output_summary":"Finished successfully"
+	}`)
+
+	rec := performRequest(t, server, http.MethodGet, "/v1/runs/"+runID, "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
 		Run    storage.Run     `json:"run"`
 		Events []storage.Event `json:"events"`
 	}
-	if err := json.Unmarshal(getRec.Body.Bytes(), &getBody); err != nil {
-		t.Fatalf("unmarshal get response: %v", err)
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
 	}
 
-	if getBody.Run.Status != "failed" {
-		t.Fatalf("expected failed status, got %q", getBody.Run.Status)
+	if body.Run.RunID != runID {
+		t.Fatalf("expected run_id %q, got %q", runID, body.Run.RunID)
 	}
-	if len(getBody.Events) != 5 {
-		t.Fatalf("expected 5 events, got %d", len(getBody.Events))
+	if len(body.Events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(body.Events))
 	}
 
-	wantTypes := []string{"reasoning", "tool_call", "policy_decision", "execution_blocked", "run_finished"}
-	for i, event := range getBody.Events {
+	wantTypes := []string{"tool_call", "execution_result", "run_finished"}
+	for i, event := range body.Events {
 		if event.Sequence != int64(i+1) {
 			t.Fatalf("expected sequence %d, got %d", i+1, event.Sequence)
 		}
@@ -173,48 +205,189 @@ func TestRunLifecycleAPI(t *testing.T) {
 			t.Fatalf("expected event type %q, got %q", wantTypes[i], event.EventType)
 		}
 	}
+}
 
-	listReq := httptest.NewRequest(http.MethodGet, "/v1/runs", nil)
-	listRec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(listRec, listReq)
-	if listRec.Code != http.StatusOK {
-		t.Fatalf("expected list status 200, got %d body=%s", listRec.Code, listRec.Body.String())
+func TestInvalidRequestsReturnBadRequest(t *testing.T) {
+	server := newTestServer(t)
+	runID := createRun(t, server)
+
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "create run missing required fields",
+			path: "/v1/runs",
+			body: `{"agent_id":"hermes-ops-agent","environment":"prod"}`,
+		},
+		{
+			name: "append event missing payload",
+			path: "/v1/runs/" + runID + "/events",
+			body: `{"event_type":"tool_call"}`,
+		},
+		{
+			name: "append event invalid event type",
+			path: "/v1/runs/" + runID + "/events",
+			body: `{"event_type":"not_real","payload":{"step":"plan"}}`,
+		},
+		{
+			name: "finish run missing output summary",
+			path: "/v1/runs/" + runID + "/finish",
+			body: `{"status":"failed"}`,
+		},
+		{
+			name: "finish run invalid status",
+			path: "/v1/runs/" + runID + "/finish",
+			body: `{"status":"running","output_summary":"still going"}`,
+		},
+		{
+			name: "append event invalid json",
+			path: "/v1/runs/" + runID + "/events",
+			body: `{"event_type":"tool_call","payload":{`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := performRequest(t, server, http.MethodPost, tc.path, tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected status 400, got %d body=%s", rec.Code, rec.Body.String())
+			}
+
+			var body map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("unmarshal error response: %v", err)
+			}
+			if body["error"] == "" {
+				t.Fatal("expected error message in response")
+			}
+		})
 	}
 }
 
-func TestAppendEventRejectsInvalidEventType(t *testing.T) {
+func TestUnknownRunReturnsNotFound(t *testing.T) {
+	server := newTestServer(t)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{
+			name:   "append event",
+			method: http.MethodPost,
+			path:   "/v1/runs/run_missing/events",
+			body:   `{"event_type":"tool_call","payload":{"tool_name":"http_request"}}`,
+		},
+		{
+			name:   "finish run",
+			method: http.MethodPost,
+			path:   "/v1/runs/run_missing/finish",
+			body:   `{"status":"failed","output_summary":"Blocked by policy"}`,
+		},
+		{
+			name:   "get run",
+			method: http.MethodGet,
+			path:   "/v1/runs/run_missing",
+			body:   "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := performRequest(t, server, tc.method, tc.path, tc.body)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("expected status 404, got %d body=%s", rec.Code, rec.Body.String())
+			}
+
+			var body map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("unmarshal error response: %v", err)
+			}
+			if body["error"] != "run not found" {
+				t.Fatalf("expected run not found error, got %q", body["error"])
+			}
+		})
+	}
+}
+
+func TestListRunsSuccess(t *testing.T) {
+	server := newTestServer(t)
+	runID := createRun(t, server)
+
+	rec := performRequest(t, server, http.MethodGet, "/v1/runs", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Runs []storage.Run `json:"runs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if len(body.Runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(body.Runs))
+	}
+	if body.Runs[0].RunID != runID {
+		t.Fatalf("expected run_id %q, got %q", runID, body.Runs[0].RunID)
+	}
+}
+
+func newTestServer(t *testing.T) *Server {
+	t.Helper()
+
 	store, err := storage.Open(filepath.Join(t.TempDir(), "stamper.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	})
 
-	server := NewServer(store)
+	return NewServer(store)
+}
 
-	createReq := httptest.NewRequest(http.MethodPost, "/v1/runs", bytes.NewBufferString(`{
+func createRun(t *testing.T, server *Server) string {
+	t.Helper()
+
+	rec := performRequest(t, server, http.MethodPost, "/v1/runs", `{
 		"agent_id":"hermes-ops-agent",
 		"environment":"prod",
 		"task":"Fetch customer data"
-	}`))
-	createRec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(createRec, createReq)
+	}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d body=%s", rec.Code, rec.Body.String())
+	}
 
-	var createBody struct {
+	var body struct {
 		RunID string `json:"run_id"`
 	}
-	if err := json.Unmarshal(createRec.Body.Bytes(), &createBody); err != nil {
-		t.Fatalf("unmarshal create response: %v", err)
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
 	}
 
-	appendReq := httptest.NewRequest(
-		http.MethodPost,
-		"/v1/runs/"+createBody.RunID+"/events",
-		bytes.NewBufferString(`{"event_type":"not_real","payload":{"step":"plan"}}`),
-	)
-	appendRec := httptest.NewRecorder()
-	server.Handler().ServeHTTP(appendRec, appendReq)
+	return body.RunID
+}
 
-	if appendRec.Code != http.StatusBadRequest {
-		t.Fatalf("expected append status 400, got %d body=%s", appendRec.Code, appendRec.Body.String())
+func performRequest(t *testing.T, server *Server, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	var requestBody *bytes.Buffer
+	if body == "" {
+		requestBody = bytes.NewBuffer(nil)
+	} else {
+		requestBody = bytes.NewBufferString(body)
 	}
+
+	req := httptest.NewRequest(method, path, requestBody)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	return rec
 }

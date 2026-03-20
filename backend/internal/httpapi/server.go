@@ -175,8 +175,8 @@ func (s *Server) handleAppendEvent(w http.ResponseWriter, r *http.Request, runID
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if request.EventType == "" {
-		writeError(w, http.StatusBadRequest, "event_type is required")
+	if request.EventType == "" || len(request.Payload) == 0 {
+		writeError(w, http.StatusBadRequest, "event_type and payload are required")
 		return
 	}
 
@@ -203,8 +203,8 @@ func (s *Server) handleFinishRun(w http.ResponseWriter, r *http.Request, runID s
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if request.Status == "" {
-		writeError(w, http.StatusBadRequest, "status is required")
+	if request.Status == "" || request.OutputSummary == "" {
+		writeError(w, http.StatusBadRequest, "status and output_summary are required")
 		return
 	}
 
@@ -213,9 +213,8 @@ func (s *Server) handleFinishRun(w http.ResponseWriter, r *http.Request, runID s
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"run_id": runID,
-		"status": request.Status,
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"ok": true,
 	})
 }
 
