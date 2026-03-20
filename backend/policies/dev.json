@@ -1,0 +1,33 @@
+{
+  "version": "v1",
+  "policies": [
+    {
+      "id": "POL-NET-001",
+      "name": "Block outbound HTTP in prod",
+      "enabled": true,
+      "priority": 200,
+      "effect": "deny",
+      "rationale": "Outbound HTTP requests are not allowed in prod.",
+      "scope": {
+        "agents": [
+          "*"
+        ],
+        "environments": [
+          "prod"
+        ],
+        "teams": [
+          "*"
+        ]
+      },
+      "match": {
+        "action_types": [
+          "tool_call"
+        ],
+        "tool_names": [
+          "http_request"
+        ],
+        "conditions": []
+      }
+    }
+  ]
+}
