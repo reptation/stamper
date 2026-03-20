@@ -181,3 +181,40 @@ func TestRunLifecycleAPI(t *testing.T) {
 		t.Fatalf("expected list status 200, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
 }
+
+func TestAppendEventRejectsInvalidEventType(t *testing.T) {
+	store, err := storage.Open(filepath.Join(t.TempDir(), "stamper.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	server := NewServer(store)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/runs", bytes.NewBufferString(`{
+		"agent_id":"hermes-ops-agent",
+		"environment":"prod",
+		"task":"Fetch customer data"
+	}`))
+	createRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(createRec, createReq)
+
+	var createBody struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createBody); err != nil {
+		t.Fatalf("unmarshal create response: %v", err)
+	}
+
+	appendReq := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/runs/"+createBody.RunID+"/events",
+		bytes.NewBufferString(`{"event_type":"not_real","payload":{"step":"plan"}}`),
+	)
+	appendRec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(appendRec, appendReq)
+
+	if appendRec.Code != http.StatusBadRequest {
+		t.Fatalf("expected append status 400, got %d body=%s", appendRec.Code, appendRec.Body.String())
+	}
+}

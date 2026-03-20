@@ -2,8 +2,11 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -110,5 +113,53 @@ func TestAppendEventRejectsInvalidJSON(t *testing.T) {
 
 	if _, err := store.AppendEvent(ctx, runID, "reasoning", json.RawMessage("{")); err == nil {
 		t.Fatal("expected invalid json error")
+	}
+}
+
+func TestAppendEventRejectsInvalidEventType(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "stamper.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	runID, err := store.CreateRun(ctx, "agent-1", "dev", "Test task")
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	_, err = store.AppendEvent(ctx, runID, "not_real", json.RawMessage(`{"ok":true}`))
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestSchemaIncludesRunStatusCheckAndStartedAtIndex(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "stamper.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	var createSQL string
+	err = store.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs'`).Scan(&createSQL)
+	if err != nil {
+		t.Fatalf("load runs schema: %v", err)
+	}
+	if createSQL == "" {
+		t.Fatal("expected runs schema")
+	}
+	if !strings.Contains(createSQL, "CHECK (status IN ('running', 'completed', 'failed'))") {
+		t.Fatalf("runs schema missing expected constraint: %s", createSQL)
+	}
+
+	var indexSQL sql.NullString
+	err = store.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_runs_started_at'`).Scan(&indexSQL)
+	if err != nil {
+		t.Fatalf("load idx_runs_started_at schema: %v", err)
+	}
+	if !indexSQL.Valid || indexSQL.String != "CREATE INDEX idx_runs_started_at ON runs(started_at)" {
+		t.Fatalf("unexpected idx_runs_started_at schema: %#v", indexSQL)
 	}
 }

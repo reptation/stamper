@@ -83,7 +83,7 @@ func (s *Store) init(ctx context.Context) error {
 			agent_id TEXT NOT NULL,
 			environment TEXT NOT NULL,
 			task TEXT NOT NULL,
-			status TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed')),
 			started_at TEXT NOT NULL,
 			finished_at TEXT
 		);`,
@@ -97,6 +97,7 @@ func (s *Store) init(ctx context.Context) error {
 			FOREIGN KEY(run_id) REFERENCES runs(run_id),
 			UNIQUE(run_id, sequence)
 		);`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_events_run_id_sequence ON events(run_id, sequence);`,
 	}
