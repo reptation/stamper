@@ -55,9 +55,9 @@ Request:
 
 ```json
 {
-  "event_type": "tool_call",
+  "event_type": "tool_requested",
   "payload": {
-    "tool_name": "http_request"
+    "tool_name": "governed_http_request"
   }
 }
 ```
@@ -101,7 +101,7 @@ Request:
   "environment": { "name": "prod" },
   "action": {
     "type": "tool_call",
-    "tool_name": "http_request",
+    "tool_name": "governed_http_request",
     "arguments": {
       "url": "https://api.external.com"
     }
@@ -115,6 +115,7 @@ Response:
 {
   "decision": "deny",
   "policy_id": "POL-NET-001",
-  "rationale": "Outbound HTTP requests are not allowed in prod."
+  "rationale": "Outbound HTTP requests are not allowed in prod.",
+  "reason": "Outbound HTTP requests are not allowed in prod."
 }
 ```

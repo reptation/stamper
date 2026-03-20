@@ -21,6 +21,8 @@ const title = computed(() => {
       return String(currentPayload.summary ?? 'Reasoning')
     case 'tool_call':
       return `Tool call: ${String(currentPayload.tool_name ?? 'unknown')}`
+    case 'tool_requested':
+      return `Tool requested: ${String(currentPayload.tool_name ?? 'unknown')}`
     case 'policy_decision':
       if (currentPayload.decision === 'deny') return 'Denied by policy'
       if (currentPayload.decision === 'allow') return 'Allowed by policy'
@@ -30,6 +32,10 @@ const title = computed(() => {
       return 'Execution blocked'
     case 'execution_result':
       return 'Execution result'
+    case 'tool_executed':
+      return `Tool executed: ${String(currentPayload.tool_name ?? 'unknown')}`
+    case 'tool_failed':
+      return `Tool failed: ${String(currentPayload.tool_name ?? 'unknown')}`
     case 'run_finished':
       return `Run ${String(currentPayload.status ?? 'finished')}`
     default:
@@ -45,12 +51,18 @@ const summary = computed(() => {
       return 'The agent recorded its intent before taking action.'
     case 'tool_call':
       return 'The agent attempted a tool invocation.'
+    case 'tool_requested':
+      return 'The governed tool requested policy evaluation before execution.'
     case 'policy_decision':
-      return String(currentPayload.rationale ?? 'A policy decision was recorded.')
+      return String(currentPayload.rationale ?? currentPayload.reason ?? 'A policy decision was recorded.')
     case 'execution_blocked':
       return String(currentPayload.reason ?? 'Execution blocked')
     case 'execution_result':
       return String(currentPayload.summary ?? currentPayload.status ?? 'Execution result recorded')
+    case 'tool_executed':
+      return String(currentPayload.summary ?? `The governed tool completed with status ${String(currentPayload.status_code ?? 'unknown')}.`)
+    case 'tool_failed':
+      return String(currentPayload.error ?? 'The governed tool failed during execution.')
     case 'run_finished':
       return String(currentPayload.output_summary ?? 'Run finished')
     default:
@@ -71,6 +83,8 @@ const badgeLabel = computed(() => {
 
 const badgeTone = computed<'neutral' | 'success' | 'danger' | 'warning'>(() => {
   if (props.event.event_type === 'execution_blocked') return 'danger'
+  if (props.event.event_type === 'tool_executed') return 'success'
+  if (props.event.event_type === 'tool_failed') return 'danger'
   if (props.event.event_type === 'policy_decision' && props.event.payload.decision === 'deny') return 'danger'
   if (props.event.event_type === 'policy_decision' && props.event.payload.decision === 'require_approval') return 'warning'
   if (props.event.event_type === 'run_finished' && props.event.payload.status === 'failed') return 'danger'
@@ -79,7 +93,7 @@ const badgeTone = computed<'neutral' | 'success' | 'danger' | 'warning'>(() => {
 })
 
 const toolCallDetails = computed(() => {
-  if (props.event.event_type !== 'tool_call') return []
+  if (props.event.event_type !== 'tool_call' && props.event.event_type !== 'tool_requested') return []
 
   const argumentsValue = (payload.value.arguments as Record<string, unknown> | undefined) ?? {}
 
@@ -95,8 +109,24 @@ const policyDecisionDetails = computed(() => {
 
   return [
     { label: 'Policy ID', value: String(payload.value.policy_id ?? '—') },
-    { label: 'Rationale', value: String(payload.value.rationale ?? '—') },
+    { label: 'Rationale', value: String(payload.value.rationale ?? payload.value.reason ?? '—') },
   ]
+})
+
+const executionDetails = computed(() => {
+  if (props.event.event_type !== 'tool_executed' && props.event.event_type !== 'tool_failed') return []
+
+  const details = [{ label: 'Tool', value: String(payload.value.tool_name ?? 'unknown') }]
+
+  if (props.event.event_type === 'tool_executed') {
+    details.push({ label: 'Status Code', value: String(payload.value.status_code ?? '—') })
+  }
+
+  if (props.event.event_type === 'tool_failed') {
+    details.push({ label: 'Error', value: String(payload.value.error ?? '—') })
+  }
+
+  return details
 })
 
 const runFinishedDetails = computed(() => {
@@ -134,6 +164,13 @@ const shouldShowPayload = computed(() => props.event.event_type !== 'reasoning')
 
     <dl v-if="policyDecisionDetails.length > 0" class="timeline-event__details">
       <div v-for="detail in policyDecisionDetails" :key="detail.label">
+        <dt>{{ detail.label }}</dt>
+        <dd>{{ detail.value }}</dd>
+      </div>
+    </dl>
+
+    <dl v-if="executionDetails.length > 0" class="timeline-event__details">
+      <div v-for="detail in executionDetails" :key="detail.label">
         <dt>{{ detail.label }}</dt>
         <dd>{{ detail.value }}</dd>
       </div>

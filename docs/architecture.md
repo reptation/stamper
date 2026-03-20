@@ -175,3 +175,24 @@ If any step fails:
 - **in-memory evaluation (no DB on hot path)**
 - **structured audit events**
 - **explainability over magic**
+
++------------------+       +-------------------------+       +-------------------------+       +----------------------+
+|  Agent Runtime   | ----> | Governed Tool / Adapter | ----> |       Stamperd          | ----> |    Stamper Proxy     |
+| (Hermes, etc.)   | tool  | governed_http_request   |       |-------------------------|       |----------------------|
+|                  | call  |                         |       | Policy Engine           |       | Validate token       |
+| Curated toolset  |       | Normalize ActionRequest |       | Run + Event Store       |       | Enforce method/host  |
+| No raw egress    |       | Create run + events     |       | Authorization Issuer    |       | Forward if allowed   |
++------------------+       +-------------------------+       +-------------------------+       +----------+-----------+
+          \                                                                                                  |
+           \                                                                                                 |
+            \---------------------------- X No direct sensitive action path X -------------------------------|
+                                                                                                             |
+                                                                                                             v
+                                                                                                  +----------------------+
+                                                                                                  | External Service/API |
+                                                                                                  +----------------------+
+
+                                      +-----------------------------------------------------------+
+                                      |                     Stamper UI                             |
+                                      |  Run Explorer · Run Detail Timeline · Policy Decisions    |
+                                      +-----------------------------------------------------------+s

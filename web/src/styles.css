@@ -309,6 +309,12 @@ a {
   background: linear-gradient(180deg, rgba(255, 248, 246, 0.96), rgba(255, 251, 245, 0.92));
 }
 
+.timeline-event--tool_executed {
+  border-color: rgba(42, 112, 76, 0.24);
+  background: linear-gradient(180deg, rgba(246, 255, 249, 0.96), rgba(247, 253, 249, 0.92));
+}
+
+.timeline-event--tool_failed,
 .timeline-event--execution_blocked {
   border-color: rgba(147, 102, 27, 0.24);
 }

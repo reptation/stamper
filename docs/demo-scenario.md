@@ -13,12 +13,11 @@
 
 1. Agent starts run
 2. Agent decides to call external API
-3. Agent emits tool_call event
+3. Agent emits tool_requested for `governed_http_request`
 4. Agent calls Stamper `/v1/evaluate-action`
 5. Stamper returns: deny
-6. Agent blocks execution
-7. Agent records execution_blocked
-8. Run finishes as failed
+6. Agent does not execute the outbound request
+7. Run finishes as failed
 
 ---
 
@@ -27,10 +26,9 @@
 Timeline:
 
 1. reasoning
-2. tool_call (http_request)
+2. tool_requested (`governed_http_request`)
 3. policy_decision (deny)
-4. execution_blocked
-5. run_finished
+4. run_finished
 
 ---
 

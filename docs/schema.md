@@ -81,9 +81,12 @@ Hardcode validation around a small set of event types:
 var ValidEventTypes = map[string]struct{}{
 	"reasoning":         {},
 	"tool_call":         {},
+	"tool_requested":    {},
 	"policy_decision":   {},
 	"execution_blocked": {},
 	"execution_result":  {},
+	"tool_executed":     {},
+	"tool_failed":       {},
 	"run_finished":      {},
 }
 ```

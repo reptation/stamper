@@ -81,6 +81,100 @@ func TestReadyReportsBundleVersionAfterLoad(t *testing.T) {
 	}
 }
 
+func TestEvaluateActionReturnsDenyDecision(t *testing.T) {
+	server := newTestServer(t)
+	server.SetPolicyBundle(newTestPolicyBundle())
+
+	rec := performRequest(t, server, http.MethodPost, "/v1/evaluate-action", `{
+		"run_id":"run_123",
+		"agent":{"id":"hermes-ops-agent","team":"platform"},
+		"environment":{"name":"prod"},
+		"action":{
+			"type":"tool_call",
+			"tool_name":"governed_http_request",
+			"arguments":{"url":"https://example.com/resource","method":"GET"}
+		}
+	}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Decision         string `json:"decision"`
+		PolicyID         string `json:"policy_id"`
+		Rationale        string `json:"rationale"`
+		Reason           string `json:"reason"`
+		ApprovalRequired bool   `json:"approval_required"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if body.Decision != "deny" {
+		t.Fatalf("expected deny decision, got %q", body.Decision)
+	}
+	if body.PolicyID != "POL-NET-001" {
+		t.Fatalf("expected policy id POL-NET-001, got %q", body.PolicyID)
+	}
+	if body.Rationale == "" || body.Reason == "" {
+		t.Fatal("expected rationale and reason in response")
+	}
+	if body.ApprovalRequired {
+		t.Fatal("expected approval_required=false")
+	}
+}
+
+func TestEvaluateActionReturnsAllowWhenNoPolicyMatches(t *testing.T) {
+	server := newTestServer(t)
+	server.SetPolicyBundle(newTestPolicyBundle())
+
+	rec := performRequest(t, server, http.MethodPost, "/v1/evaluate-action", `{
+		"run_id":"run_123",
+		"agent":{"id":"hermes-ops-agent","team":"platform"},
+		"environment":{"name":"dev"},
+		"action":{
+			"type":"tool_call",
+			"tool_name":"governed_http_request",
+			"arguments":{"url":"https://example.com/resource","method":"GET"}
+		}
+	}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Decision  string `json:"decision"`
+		Rationale string `json:"rationale"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if body.Decision != "allow" {
+		t.Fatalf("expected allow decision, got %q", body.Decision)
+	}
+	if body.Rationale == "" {
+		t.Fatal("expected rationale in response")
+	}
+}
+
+func TestEvaluateActionRequiresReadyPolicyEvaluator(t *testing.T) {
+	server := newTestServer(t)
+
+	rec := performRequest(t, server, http.MethodPost, "/v1/evaluate-action", `{
+		"run_id":"run_123",
+		"agent":{"id":"hermes-ops-agent"},
+		"environment":{"name":"prod"},
+		"action":{"type":"tool_call","tool_name":"governed_http_request"}
+	}`)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateRunSuccess(t *testing.T) {
 	server := newTestServer(t)
 
@@ -210,6 +304,7 @@ func TestGetRunDetailReturnsOrderedEvents(t *testing.T) {
 func TestInvalidRequestsReturnBadRequest(t *testing.T) {
 	server := newTestServer(t)
 	runID := createRun(t, server)
+	server.SetPolicyBundle(newTestPolicyBundle())
 
 	tests := []struct {
 		name string
@@ -245,6 +340,16 @@ func TestInvalidRequestsReturnBadRequest(t *testing.T) {
 			name: "append event invalid json",
 			path: "/v1/runs/" + runID + "/events",
 			body: `{"event_type":"tool_call","payload":{`,
+		},
+		{
+			name: "evaluate action missing action tool name",
+			path: "/v1/evaluate-action",
+			body: `{
+				"run_id":"run_123",
+				"agent":{"id":"hermes-ops-agent"},
+				"environment":{"name":"prod"},
+				"action":{"type":"tool_call"}
+			}`,
 		},
 	}
 
@@ -390,4 +495,29 @@ func performRequest(t *testing.T, server *Server, method, path, body string) *ht
 	rec := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)
 	return rec
+}
+
+func newTestPolicyBundle() *policy.Bundle {
+	return &policy.Bundle{
+		Version: "v1",
+		Policies: []policy.Policy{
+			{
+				ID:        "POL-NET-001",
+				Name:      "Block governed HTTP in prod",
+				Enabled:   true,
+				Priority:  200,
+				Effect:    "deny",
+				Rationale: "Outbound HTTP requests are not allowed in prod.",
+				Scope: policy.Scope{
+					Agents:       []string{"*"},
+					Environments: []string{"prod"},
+					Teams:        []string{"*"},
+				},
+				Match: policy.Match{
+					ActionTypes: []string{"tool_call"},
+					ToolNames:   []string{"governed_http_request"},
+				},
+			},
+		},
+	}
 }

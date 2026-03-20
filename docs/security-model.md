@@ -55,9 +55,9 @@ This separation improves:
 Every governed action produces a structured event trail:
 
 - reasoning
-- tool_call
+- tool_requested
 - policy_decision
-- execution outcome
+- tool_executed / tool_failed
 - run status
 
 This enables:

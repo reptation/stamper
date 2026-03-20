@@ -24,7 +24,7 @@
           "tool_call"
         ],
         "tool_names": [
-          "http_request"
+          "governed_http_request"
         ],
         "conditions": []
       }

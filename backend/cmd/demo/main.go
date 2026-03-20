@@ -16,11 +16,13 @@ import (
 )
 
 const (
-	mockAgentID   = "mock-agent"
-	environment   = "prod"
-	taskSummary   = "Fetch customer data from external API"
-	requestURL    = "https://api.external-vendor.com/customers"
-	requestMethod = "GET"
+	mockAgentID      = "mock-agent"
+	mockAgentTeam    = "platform"
+	environment      = "prod"
+	taskSummary      = "Fetch customer data from external API"
+	requestURL       = "https://api.external-vendor.com/customers"
+	requestMethod    = "GET"
+	governedToolName = "governed_http_request"
 )
 
 type demoResult struct {
@@ -41,20 +43,10 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	bundle, err := policy.LoadBundle(cfg.PolicyBundlePath)
-	if err != nil {
-		return fmt.Errorf("load policy bundle: %w", err)
-	}
-
-	evaluator, err := policy.NewEvaluator(bundle)
-	if err != nil {
-		return fmt.Errorf("build evaluator: %w", err)
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	result, err := runDemo(ctx, &http.Client{Timeout: 5 * time.Second}, apiBaseURL(cfg.HTTPAddr), evaluator)
+	result, err := runDemo(ctx, &http.Client{Timeout: 5 * time.Second}, apiBaseURL(cfg.HTTPAddr))
 	if err != nil {
 		return err
 	}
@@ -63,7 +55,7 @@ func run() error {
 	return nil
 }
 
-func runDemo(ctx context.Context, client *http.Client, baseURL string, evaluator *policy.Evaluator) (demoResult, error) {
+func runDemo(ctx context.Context, client *http.Client, baseURL string) (demoResult, error) {
 	runID, err := createRun(ctx, client, baseURL)
 	if err != nil {
 		return demoResult{}, err
@@ -79,31 +71,16 @@ func runDemo(ctx context.Context, client *http.Client, baseURL string, evaluator
 		"url":    requestURL,
 		"method": requestMethod,
 	}
-	if err := appendEvent(ctx, client, baseURL, runID, "tool_call", map[string]any{
-		"tool_name": "http_request",
+	if err := appendEvent(ctx, client, baseURL, runID, "tool_requested", map[string]any{
+		"tool_name": governedToolName,
 		"arguments": actionArguments,
 	}); err != nil {
 		return demoResult{}, err
 	}
 
-	decision, err := evaluator.Evaluate(policy.ActionRequest{
-		RunID: runID,
-		Agent: policy.Agent{
-			ID: mockAgentID,
-		},
-		Environment: policy.Environment{
-			Name: environment,
-		},
-		Action: policy.Action{
-			Type:     "tool_call",
-			ToolName: "http_request",
-			Arguments: map[string]any{
-				"url": requestURL,
-			},
-		},
-	})
+	decision, err := evaluateAction(ctx, client, baseURL, runID, actionArguments)
 	if err != nil {
-		return demoResult{}, fmt.Errorf("evaluate policy: %w", err)
+		return demoResult{}, err
 	}
 	if decision.Decision != "deny" {
 		return demoResult{}, fmt.Errorf("expected deny decision, got %q", decision.Decision)
@@ -117,12 +94,6 @@ func runDemo(ctx context.Context, client *http.Client, baseURL string, evaluator
 		return demoResult{}, err
 	}
 
-	if err := appendEvent(ctx, client, baseURL, runID, "execution_blocked", map[string]any{
-		"reason": "Blocked by policy",
-	}); err != nil {
-		return demoResult{}, err
-	}
-
 	if err := finishRun(ctx, client, baseURL, runID, "failed", "Blocked by policy"); err != nil {
 		return demoResult{}, err
 	}
@@ -131,6 +102,38 @@ func runDemo(ctx context.Context, client *http.Client, baseURL string, evaluator
 		RunID:    runID,
 		Decision: decision,
 	}, nil
+}
+
+func evaluateAction(ctx context.Context, client *http.Client, baseURL, runID string, actionArguments map[string]any) (policy.Decision, error) {
+	var decision policy.Decision
+
+	err := postJSON(
+		ctx,
+		client,
+		baseURL+"/v1/evaluate-action",
+		map[string]any{
+			"run_id": runID,
+			"agent": map[string]string{
+				"id":   mockAgentID,
+				"team": mockAgentTeam,
+			},
+			"environment": map[string]string{
+				"name": environment,
+			},
+			"action": map[string]any{
+				"type":      "tool_call",
+				"tool_name": governedToolName,
+				"arguments": actionArguments,
+			},
+		},
+		http.StatusOK,
+		&decision,
+	)
+	if err != nil {
+		return policy.Decision{}, fmt.Errorf("evaluate policy: %w", err)
+	}
+
+	return decision, nil
 }
 
 func createRun(ctx context.Context, client *http.Client, baseURL string) (string, error) {

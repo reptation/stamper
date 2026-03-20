@@ -15,9 +15,10 @@ import (
 type Server struct {
 	mux *http.ServeMux
 
-	mu     sync.RWMutex
-	bundle *policy.Bundle
-	store  RunStore
+	mu        sync.RWMutex
+	bundle    *policy.Bundle
+	evaluator *policy.Evaluator
+	store     RunStore
 }
 
 type RunStore interface {
@@ -48,11 +49,21 @@ func (s *Server) SetPolicyBundle(bundle *policy.Bundle) {
 	defer s.mu.Unlock()
 
 	s.bundle = bundle
+	s.evaluator = nil
+	if bundle == nil {
+		return
+	}
+
+	evaluator, err := policy.NewEvaluator(bundle)
+	if err == nil {
+		s.evaluator = evaluator
+	}
 }
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/health", s.handleHealth)
 	s.mux.HandleFunc("/v1/ready", s.handleReady)
+	s.mux.HandleFunc("/v1/evaluate-action", s.handleEvaluateAction)
 	s.mux.HandleFunc("/v1/runs", s.handleRuns)
 	s.mux.HandleFunc("/v1/runs/", s.handleRunByID)
 }
@@ -87,6 +98,44 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeMethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
+}
+
+func (s *Server) handleEvaluateAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+
+	evaluator, ok := s.currentEvaluator()
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "policy evaluator unavailable")
+		return
+	}
+
+	var request policy.ActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := validateActionRequest(request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	decision, err := evaluator.Evaluate(request)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "policy evaluation failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"decision":          decision.Decision,
+		"policy_id":         decision.PolicyID,
+		"policy_name":       decision.PolicyName,
+		"rationale":         decision.Rationale,
+		"reason":            decision.Rationale,
+		"approval_required": decision.ApprovalRequired,
+	})
 }
 
 func (s *Server) handleRunByID(w http.ResponseWriter, r *http.Request) {
@@ -251,6 +300,34 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request, runID stri
 		"run":    run,
 		"events": events,
 	})
+}
+
+func (s *Server) currentEvaluator() (*policy.Evaluator, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.evaluator == nil {
+		return nil, false
+	}
+
+	return s.evaluator, true
+}
+
+func validateActionRequest(request policy.ActionRequest) error {
+	switch {
+	case request.RunID == "":
+		return errors.New("run_id is required")
+	case request.Agent.ID == "":
+		return errors.New("agent.id is required")
+	case request.Environment.Name == "":
+		return errors.New("environment.name is required")
+	case request.Action.Type == "":
+		return errors.New("action.type is required")
+	case request.Action.ToolName == "":
+		return errors.New("action.tool_name is required")
+	default:
+		return nil
+	}
 }
 
 func (s *Server) writeStoreError(w http.ResponseWriter, err error) {

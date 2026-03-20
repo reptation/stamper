@@ -20,10 +20,24 @@ const title = computed(() => run.value?.task ?? 'Run detail')
 const sortedEvents = computed(() => [...events.value].sort((a, b) => a.sequence - b.sequence))
 const storySummary = computed(() => {
   const policyDecision = sortedEvents.value.find((event) => event.event_type === 'policy_decision')
+  const toolRequested = sortedEvents.value.find(
+    (event) => event.event_type === 'tool_requested' || event.event_type === 'tool_call',
+  )
   const blocked = sortedEvents.value.find((event) => event.event_type === 'execution_blocked')
+  const toolExecuted = sortedEvents.value.find((event) => event.event_type === 'tool_executed')
+  const toolFailed = sortedEvents.value.find((event) => event.event_type === 'tool_failed')
 
   if (policyDecision?.payload.decision === 'deny' && blocked) {
     return 'The agent attempted an HTTP request, policy denied it, and execution was blocked.'
+  }
+  if (policyDecision?.payload.decision === 'deny' && toolRequested) {
+    return 'The agent attempted an HTTP request, and policy denied it before execution.'
+  }
+  if (policyDecision?.payload.decision === 'allow' && toolExecuted) {
+    return 'The agent action was evaluated, explicitly allowed by policy, and completed successfully.'
+  }
+  if (policyDecision?.payload.decision === 'allow' && toolFailed) {
+    return 'The agent action was allowed by policy, but the governed tool failed during execution.'
   }
   if (policyDecision?.payload.decision === 'allow') {
     return 'The agent action was evaluated and explicitly allowed by policy.'

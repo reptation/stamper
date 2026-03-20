@@ -25,18 +25,16 @@ func TestRunDemoCreatesDenyPathTimeline(t *testing.T) {
 		t.Fatalf("load bundle: %v", err)
 	}
 
-	evaluator, err := policy.NewEvaluator(bundle)
-	if err != nil {
-		t.Fatalf("build evaluator: %v", err)
-	}
+	apiServer := httpapi.NewServer(store)
+	apiServer.SetPolicyBundle(bundle)
 
-	server := httptest.NewServer(httpapi.NewServer(store).Handler())
+	server := httptest.NewServer(apiServer.Handler())
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	result, err := runDemo(ctx, server.Client(), server.URL, evaluator)
+	result, err := runDemo(ctx, server.Client(), server.URL)
 	if err != nil {
 		t.Fatalf("run demo: %v", err)
 	}
@@ -59,15 +57,14 @@ func TestRunDemoCreatesDenyPathTimeline(t *testing.T) {
 	if run.Status != "failed" {
 		t.Fatalf("expected failed status, got %q", run.Status)
 	}
-	if len(events) != 5 {
-		t.Fatalf("expected 5 events, got %d", len(events))
+	if len(events) != 4 {
+		t.Fatalf("expected 4 events, got %d", len(events))
 	}
 
 	wantTypes := []string{
 		"reasoning",
-		"tool_call",
+		"tool_requested",
 		"policy_decision",
-		"execution_blocked",
 		"run_finished",
 	}
 	for i, event := range events {
