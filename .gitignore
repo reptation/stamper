@@ -34,3 +34,6 @@ go.work.sum
 # Frontend
 node_modules/
 dist/
+
+# Local db
+stamper.db
