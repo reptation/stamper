@@ -38,7 +38,15 @@ function openRun(runID: string) {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="run in runs" :key="run.run_id" class="run-row" @click="openRun(run.run_id)">
+        <tr
+          v-for="run in runs"
+          :key="run.run_id"
+          class="run-row"
+          tabindex="0"
+          @click="openRun(run.run_id)"
+          @keydown.enter.prevent="openRun(run.run_id)"
+          @keydown.space.prevent="openRun(run.run_id)"
+        >
           <td class="run-table__mono">{{ run.run_id }}</td>
           <td>{{ run.agent_id }}</td>
           <td>{{ run.environment }}</td>

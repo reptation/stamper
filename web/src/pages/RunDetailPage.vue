@@ -8,7 +8,7 @@ import { getRunDetail } from '@/lib/api'
 import type { Event, Run } from '@/lib/types'
 
 const props = defineProps<{
-  id: string
+  run_id: string
 }>()
 
 const run = ref<Run | null>(null)
@@ -17,13 +17,27 @@ const loading = ref(true)
 const error = ref('')
 
 const title = computed(() => run.value?.task ?? 'Run detail')
+const sortedEvents = computed(() => [...events.value].sort((a, b) => a.sequence - b.sequence))
+const storySummary = computed(() => {
+  const policyDecision = sortedEvents.value.find((event) => event.event_type === 'policy_decision')
+  const blocked = sortedEvents.value.find((event) => event.event_type === 'execution_blocked')
+
+  if (policyDecision?.payload.decision === 'deny' && blocked) {
+    return 'The agent attempted an HTTP request, policy denied it, and execution was blocked.'
+  }
+  if (policyDecision?.payload.decision === 'allow') {
+    return 'The agent action was evaluated and explicitly allowed by policy.'
+  }
+
+  return 'Review the ordered event timeline to understand what happened during this run.'
+})
 
 async function loadRunDetail() {
   loading.value = true
   error.value = ''
 
   try {
-    const response = await getRunDetail(props.id)
+    const response = await getRunDetail(props.run_id)
     run.value = response.run
     events.value = response.events
   } catch (err) {
@@ -38,7 +52,7 @@ onMounted(() => {
 })
 
 watch(
-  () => props.id,
+  () => props.run_id,
   () => {
     void loadRunDetail()
   },
@@ -62,15 +76,20 @@ watch(
     <template v-else-if="run">
       <RunMetadataCard :run="run" />
 
+      <section class="panel story-card">
+        <p class="eyebrow">What happened</p>
+        <p class="story-card__text">{{ storySummary }}</p>
+      </section>
+
       <section class="page-stack">
         <div class="section-heading">
           <h3>Timeline</h3>
-          <p>{{ events.length }} event{{ events.length === 1 ? '' : 's' }}</p>
+          <p>{{ sortedEvents.length }} event{{ sortedEvents.length === 1 ? '' : 's' }}</p>
         </div>
 
-        <div v-if="events.length === 0" class="panel state-card">No events found</div>
+        <div v-if="sortedEvents.length === 0" class="panel state-card">No events found</div>
         <div v-else class="timeline-list">
-          <TimelineEvent v-for="event in events" :key="event.id" :event="event" />
+          <TimelineEvent v-for="event in sortedEvents" :key="event.id" :event="event" />
         </div>
       </section>
     </template>

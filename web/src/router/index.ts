@@ -16,10 +16,12 @@ const router = createRouter({
       component: RunsPage,
     },
     {
-      path: '/runs/:id',
+      path: '/runs/:run_id',
       name: 'run-detail',
       component: RunDetailPage,
-      props: true,
+      props: (route) => ({
+        run_id: String(route.params.run_id),
+      }),
     },
     {
       path: '/:pathMatch(.*)*',
