@@ -1,11 +1,35 @@
-Keep it honest.
+# Roadmap
 
-Phases:
+## MVP (v0.1)
 
-MVP: deny path
+- policy bundle load at startup
+- in-memory evaluation
+- deny outbound HTTP demo
+- run + event storage
+- Vue run list + timeline
 
-v0.2: approval flow
+---
 
-v0.3: real agent integration
+## v0.2
 
-later: policy refresh, richer conditions, capability tokens
+- approval workflow
+- approval UI
+- approval tokens
+
+---
+
+## v0.3
+
+- real agent integration (Hermes)
+- richer conditions
+- policy editing
+
+---
+
+## v0.4+
+
+- policy refresh
+- capability tokens
+- execution brokers
+- network enforcement
+- multi-agent support
