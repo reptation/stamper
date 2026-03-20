@@ -14,6 +14,7 @@ import (
 	"github.com/reptation/stamper/backend/internal/config"
 	"github.com/reptation/stamper/backend/internal/httpapi"
 	"github.com/reptation/stamper/backend/internal/policy"
+	"github.com/reptation/stamper/backend/internal/storage"
 )
 
 func main() {
@@ -29,7 +30,13 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	server := httpapi.NewServer()
+	store, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("open storage: %w", err)
+	}
+	defer store.Close()
+
+	server := httpapi.NewServer(store)
 
 	bundle, err := policy.LoadBundle(cfg.PolicyBundlePath)
 	if err != nil {
