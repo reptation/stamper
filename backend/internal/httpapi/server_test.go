@@ -145,8 +145,10 @@ func TestEvaluateActionReturnsAllowWhenNoPolicyMatches(t *testing.T) {
 	}
 
 	var body struct {
-		Decision  string `json:"decision"`
-		Rationale string `json:"rationale"`
+		Decision          string `json:"decision"`
+		Rationale         string `json:"rationale"`
+		ApprovalToken     string `json:"approval_token"`
+		ApprovalExpiresAt string `json:"approval_expires_at"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
@@ -157,6 +159,12 @@ func TestEvaluateActionReturnsAllowWhenNoPolicyMatches(t *testing.T) {
 	}
 	if body.Rationale == "" {
 		t.Fatal("expected rationale in response")
+	}
+	if body.ApprovalToken == "" {
+		t.Fatal("expected approval token in allow response")
+	}
+	if body.ApprovalExpiresAt == "" {
+		t.Fatal("expected approval expiry in allow response")
 	}
 }
 
@@ -172,6 +180,93 @@ func TestEvaluateActionRequiresReadyPolicyEvaluator(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected status 503, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestValidateTokenSuccess(t *testing.T) {
+	server := newTestServer(t)
+	server.SetPolicyBundle(newTestPolicyBundle())
+
+	evaluateRec := performRequest(t, server, http.MethodPost, "/v1/evaluate-action", `{
+		"run_id":"run_123",
+		"agent":{"id":"hermes-ops-agent","team":"platform"},
+		"environment":{"name":"dev"},
+		"action":{
+			"type":"tool_call",
+			"tool_name":"governed_http_request",
+			"arguments":{"url":"https://example.com/resource","method":"GET"}
+		}
+	}`)
+	if evaluateRec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", evaluateRec.Code, evaluateRec.Body.String())
+	}
+
+	var evaluateBody struct {
+		ApprovalToken string `json:"approval_token"`
+	}
+	if err := json.Unmarshal(evaluateRec.Body.Bytes(), &evaluateBody); err != nil {
+		t.Fatalf("unmarshal evaluate response: %v", err)
+	}
+	if evaluateBody.ApprovalToken == "" {
+		t.Fatal("expected approval token in response")
+	}
+
+	validateRec := performRequest(t, server, http.MethodPost, "/v1/validate-token", `{
+		"approval_token":"`+evaluateBody.ApprovalToken+`",
+		"method":"GET",
+		"url":"https://example.com/another-path"
+	}`)
+	if validateRec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", validateRec.Code, validateRec.Body.String())
+	}
+
+	var validateBody struct {
+		Valid bool   `json:"valid"`
+		Host  string `json:"host"`
+	}
+	if err := json.Unmarshal(validateRec.Body.Bytes(), &validateBody); err != nil {
+		t.Fatalf("unmarshal validate response: %v", err)
+	}
+	if !validateBody.Valid {
+		t.Fatal("expected valid=true")
+	}
+	if validateBody.Host != "example.com" {
+		t.Fatalf("expected host example.com, got %q", validateBody.Host)
+	}
+}
+
+func TestValidateTokenRejectsMethodMismatch(t *testing.T) {
+	server := newTestServer(t)
+	server.SetPolicyBundle(newTestPolicyBundle())
+
+	evaluateRec := performRequest(t, server, http.MethodPost, "/v1/evaluate-action", `{
+		"run_id":"run_123",
+		"agent":{"id":"hermes-ops-agent","team":"platform"},
+		"environment":{"name":"dev"},
+		"action":{
+			"type":"tool_call",
+			"tool_name":"governed_http_request",
+			"arguments":{"url":"https://example.com/resource","method":"GET"}
+		}
+	}`)
+	if evaluateRec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", evaluateRec.Code, evaluateRec.Body.String())
+	}
+
+	var evaluateBody struct {
+		ApprovalToken string `json:"approval_token"`
+	}
+	if err := json.Unmarshal(evaluateRec.Body.Bytes(), &evaluateBody); err != nil {
+		t.Fatalf("unmarshal evaluate response: %v", err)
+	}
+
+	validateRec := performRequest(t, server, http.MethodPost, "/v1/validate-token", `{
+		"approval_token":"`+evaluateBody.ApprovalToken+`",
+		"method":"POST",
+		"url":"https://example.com/resource"
+	}`)
+	if validateRec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d body=%s", validateRec.Code, validateRec.Body.String())
 	}
 }
 

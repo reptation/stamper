@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/reptation/stamper/backend/internal/approval"
 	"github.com/reptation/stamper/backend/internal/policy"
 	"github.com/reptation/stamper/backend/internal/storage"
 )
@@ -15,10 +18,11 @@ import (
 type Server struct {
 	mux *http.ServeMux
 
-	mu        sync.RWMutex
-	bundle    *policy.Bundle
-	evaluator *policy.Evaluator
-	store     RunStore
+	mu         sync.RWMutex
+	bundle     *policy.Bundle
+	evaluator  *policy.Evaluator
+	tokenStore *approval.Store
+	store      RunStore
 }
 
 type RunStore interface {
@@ -31,8 +35,9 @@ type RunStore interface {
 
 func NewServer(store RunStore) *Server {
 	s := &Server{
-		mux:   http.NewServeMux(),
-		store: store,
+		mux:        http.NewServeMux(),
+		store:      store,
+		tokenStore: approval.NewStore(60 * time.Second),
 	}
 
 	s.routes()
@@ -60,10 +65,23 @@ func (s *Server) SetPolicyBundle(bundle *policy.Bundle) {
 	}
 }
 
+func (s *Server) SetApprovalTokenStore(tokenStore *approval.Store) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if tokenStore == nil {
+		s.tokenStore = approval.NewStore(60 * time.Second)
+		return
+	}
+
+	s.tokenStore = tokenStore
+}
+
 func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/health", s.handleHealth)
 	s.mux.HandleFunc("/v1/ready", s.handleReady)
 	s.mux.HandleFunc("/v1/evaluate-action", s.handleEvaluateAction)
+	s.mux.HandleFunc("/v1/validate-token", s.handleValidateToken)
 	s.mux.HandleFunc("/v1/runs", s.handleRuns)
 	s.mux.HandleFunc("/v1/runs/", s.handleRunByID)
 }
@@ -128,13 +146,84 @@ func (s *Server) handleEvaluateAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"decision":          decision.Decision,
 		"policy_id":         decision.PolicyID,
 		"policy_name":       decision.PolicyName,
 		"rationale":         decision.Rationale,
 		"reason":            decision.Rationale,
 		"approval_required": decision.ApprovalRequired,
+	}
+
+	if decision.Decision == "allow" && request.Action.ToolName == "governed_http_request" {
+		tokenStore, ok := s.currentTokenStore()
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, "approval token store unavailable")
+			return
+		}
+
+		method, _ := request.Action.Arguments["method"].(string)
+		rawURL, _ := request.Action.Arguments["url"].(string)
+		token, err := tokenStore.Issue(method, rawURL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		response["approval_token"] = token.Value
+		response["approval_expires_at"] = token.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleValidateToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+
+	tokenStore, ok := s.currentTokenStore()
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "approval token store unavailable")
+		return
+	}
+
+	var request struct {
+		ApprovalToken string `json:"approval_token"`
+		Method        string `json:"method"`
+		URL           string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if request.ApprovalToken == "" || request.Method == "" || request.URL == "" {
+		writeError(w, http.StatusBadRequest, "approval_token, method, and url are required")
+		return
+	}
+
+	token, err := tokenStore.Validate(request.ApprovalToken, request.Method, request.URL)
+	if err != nil {
+		switch {
+		case errors.Is(err, approval.ErrInvalidRequest):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, approval.ErrInvalidToken),
+			errors.Is(err, approval.ErrExpiredToken),
+			errors.Is(err, approval.ErrMethodMismatch),
+			errors.Is(err, approval.ErrHostMismatch):
+			writeError(w, http.StatusForbidden, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, "token validation failed")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"valid":      true,
+		"method":     token.Method,
+		"host":       token.Host,
+		"expires_at": token.ExpiresAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -313,6 +402,17 @@ func (s *Server) currentEvaluator() (*policy.Evaluator, bool) {
 	return s.evaluator, true
 }
 
+func (s *Server) currentTokenStore() (*approval.Store, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.tokenStore == nil {
+		return nil, false
+	}
+
+	return s.tokenStore, true
+}
+
 func validateActionRequest(request policy.ActionRequest) error {
 	switch {
 	case request.RunID == "":
@@ -326,6 +426,21 @@ func validateActionRequest(request policy.ActionRequest) error {
 	case request.Action.ToolName == "":
 		return errors.New("action.tool_name is required")
 	default:
+		if request.Action.ToolName != "governed_http_request" {
+			return nil
+		}
+
+		method, ok := request.Action.Arguments["method"].(string)
+		if !ok || strings.TrimSpace(method) == "" {
+			return errors.New("action.arguments.method is required for governed_http_request")
+		}
+		rawURL, ok := request.Action.Arguments["url"].(string)
+		if !ok || strings.TrimSpace(rawURL) == "" {
+			return errors.New("action.arguments.url is required for governed_http_request")
+		}
+		if _, _, err := approval.NormalizeMethodAndHost(method, rawURL); err != nil {
+			return fmt.Errorf("action.arguments invalid: %w", err)
+		}
 		return nil
 	}
 }

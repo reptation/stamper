@@ -11,16 +11,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/reptation/stamper/backend/internal/approval"
 	"github.com/reptation/stamper/backend/internal/config"
-	"github.com/reptation/stamper/backend/internal/httpapi"
-	"github.com/reptation/stamper/backend/internal/policy"
-	"github.com/reptation/stamper/backend/internal/storage"
+	"github.com/reptation/stamper/backend/internal/proxy"
 )
 
 func main() {
 	if err := run(); err != nil {
-		log.Printf("stamperd: %v", err)
+		log.Printf("stamper-proxy: %v", err)
 		os.Exit(1)
 	}
 }
@@ -31,23 +28,10 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	store, err := storage.Open(cfg.DBPath)
-	if err != nil {
-		return fmt.Errorf("open storage: %w", err)
-	}
-	defer store.Close()
-
-	server := httpapi.NewServer(store)
-	server.SetApprovalTokenStore(approval.NewStore(cfg.ApprovalTokenTTL))
-
-	bundle, err := policy.LoadBundle(cfg.PolicyBundlePath)
-	if err != nil {
-		return fmt.Errorf("startup policy bundle load failed: %w", err)
-	}
-	server.SetPolicyBundle(bundle)
+	server := proxy.NewServer(cfg.StamperBaseURL, &http.Client{})
 
 	httpServer := &http.Server{
-		Addr:              cfg.HTTPAddr,
+		Addr:              cfg.ProxyHTTPAddr,
 		Handler:           server.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
