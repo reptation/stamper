@@ -1,31 +1,50 @@
 {
-  "version": "v1",
+  "version": "dev-1",
   "policies": [
     {
-      "id": "POL-NET-001",
-      "name": "Block outbound HTTP in prod",
+      "id": "allow-httpbin-get",
+      "name": "Allow governed GET to httpbin",
       "enabled": true,
-      "priority": 200,
-      "effect": "deny",
-      "rationale": "Outbound HTTP requests are not allowed in prod.",
+      "priority": 100,
+      "effect": "allow",
+      "rationale": "Allow a single known-good host for end-to-end testing.",
       "scope": {
-        "agents": [
-          "*"
-        ],
-        "environments": [
-          "prod"
-        ],
-        "teams": [
-          "*"
-        ]
+        "agents": ["hermes-agent"],
+        "environments": ["dev"],
+        "teams": ["default"]
       },
       "match": {
-        "action_types": [
-          "tool_call"
-        ],
-        "tool_names": [
-          "governed_http_request"
-        ],
+        "action_types": ["tool_call"],
+        "tool_names": ["governed_http_request"],
+        "conditions": [
+          {
+            "field": "action.arguments.method",
+            "operator": "equals",
+            "value": "GET"
+          },
+          {
+            "field": "action.arguments.url",
+            "operator": "contains",
+            "value": "https://httpbin.org/get"
+          }
+        ]
+      }
+    },
+    {
+      "id": "deny-all-other-governed-http",
+      "name": "Deny all other governed HTTP calls",
+      "enabled": true,
+      "priority": 10,
+      "effect": "deny",
+      "rationale": "Everything else is denied during local proxy testing.",
+      "scope": {
+        "agents": ["*"],
+        "environments": ["*"],
+        "teams": ["*"]
+      },
+      "match": {
+        "action_types": ["tool_call"],
+        "tool_names": ["governed_http_request"],
         "conditions": []
       }
     }
