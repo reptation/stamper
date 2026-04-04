@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/stamper-logo.png" alt="Stamper logo" width="220" />
+</p>
+
 # Stamper
 
 **Policy enforcement and audit for AI agents**
