@@ -2,16 +2,25 @@
   <img src="assets/stamper-logo.png" alt="Stamper logo" width="220" />
 </p>
 
-# Stamper
+<h1 align="center">Stamper</h1>
 
-**Policy enforcement and audit for AI agents**
+<p align="center">
+  <strong>Policy enforcement and audit for AI agents</strong>
+</p>
 
-Stamper is a sidecar service that evaluates, enforces, and records agent actions in real time.
+<p align="center">
+  Stamper is a sidecar service that evaluates, enforces, and records agent actions in real time.
+</p>
 
-It ensures that:
-- unsafe actions are blocked before execution
-- every decision is explainable
-- every run is fully auditable
+<p align="center">
+  It ensures that:
+</p>
+
+<p align="center">
+  • unsafe actions are blocked before execution<br>
+  • every decision is explainable<br>
+  • every run is fully auditable
+</p>
 
 ---
 
