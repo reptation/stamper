@@ -1,8 +1,8 @@
 <h1>
   <img src="assets/stamper-logo.png"
        alt="Stamper logo"
-       width="64"
-       style="vertical-align: -6px; margin-right: 12px;" />
+       width="72"
+       style="vertical-align: -8px; margin-right: 12px;" />
   Stamper
 </h1>
 
