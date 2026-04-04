@@ -1,6 +1,9 @@
-<h1 align="left" style="display: flex; align-items: center; gap: 12px;">
-  <img src="assets/stamper-logo.png" alt="Stamper logo" width="48" />
-  <span>Stamper</span>
+<h1>
+  <img src="assets/stamper-logo.png"
+       alt="Stamper logo"
+       width="64"
+       style="vertical-align: -6px; margin-right: 12px;" />
+  Stamper
 </h1>
 
 **Policy enforcement and audit for AI agents**
