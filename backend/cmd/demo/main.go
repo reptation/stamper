@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/reptation/stamper/backend/internal/config"
+	"github.com/reptation/stamper/backend/internal/logging"
 	"github.com/reptation/stamper/backend/internal/policy"
 )
 
@@ -56,12 +57,14 @@ func run() error {
 }
 
 func runDemo(ctx context.Context, client *http.Client, baseURL string) (demoResult, error) {
-	runID, err := createRun(ctx, client, baseURL)
+	requestID := logging.NewRequestID()
+
+	runID, err := createRun(ctx, client, baseURL, requestID)
 	if err != nil {
 		return demoResult{}, err
 	}
 
-	if err := appendEvent(ctx, client, baseURL, runID, "reasoning", map[string]any{
+	if err := appendEvent(ctx, client, baseURL, runID, requestID, "reasoning", map[string]any{
 		"summary": "Need to fetch customer data from external API",
 	}); err != nil {
 		return demoResult{}, err
@@ -71,14 +74,14 @@ func runDemo(ctx context.Context, client *http.Client, baseURL string) (demoResu
 		"url":    requestURL,
 		"method": requestMethod,
 	}
-	if err := appendEvent(ctx, client, baseURL, runID, "tool_requested", map[string]any{
+	if err := appendEvent(ctx, client, baseURL, runID, requestID, "tool_requested", map[string]any{
 		"tool_name": governedToolName,
 		"arguments": actionArguments,
 	}); err != nil {
 		return demoResult{}, err
 	}
 
-	decision, err := evaluateAction(ctx, client, baseURL, runID, actionArguments)
+	decision, err := evaluateAction(ctx, client, baseURL, runID, requestID, actionArguments)
 	if err != nil {
 		return demoResult{}, err
 	}
@@ -86,7 +89,7 @@ func runDemo(ctx context.Context, client *http.Client, baseURL string) (demoResu
 		return demoResult{}, fmt.Errorf("expected deny decision, got %q", decision.Decision)
 	}
 
-	if err := appendEvent(ctx, client, baseURL, runID, "policy_decision", map[string]any{
+	if err := appendEvent(ctx, client, baseURL, runID, requestID, "policy_decision", map[string]any{
 		"decision":  decision.Decision,
 		"policy_id": decision.PolicyID,
 		"rationale": decision.Rationale,
@@ -94,7 +97,7 @@ func runDemo(ctx context.Context, client *http.Client, baseURL string) (demoResu
 		return demoResult{}, err
 	}
 
-	if err := finishRun(ctx, client, baseURL, runID, "failed", "Blocked by policy"); err != nil {
+	if err := finishRun(ctx, client, baseURL, runID, requestID, "failed", "Blocked by policy"); err != nil {
 		return demoResult{}, err
 	}
 
@@ -104,7 +107,7 @@ func runDemo(ctx context.Context, client *http.Client, baseURL string) (demoResu
 	}, nil
 }
 
-func evaluateAction(ctx context.Context, client *http.Client, baseURL, runID string, actionArguments map[string]any) (policy.Decision, error) {
+func evaluateAction(ctx context.Context, client *http.Client, baseURL, runID, requestID string, actionArguments map[string]any) (policy.Decision, error) {
 	var decision policy.Decision
 
 	err := postJSON(
@@ -127,6 +130,7 @@ func evaluateAction(ctx context.Context, client *http.Client, baseURL, runID str
 			},
 		},
 		http.StatusOK,
+		requestID,
 		&decision,
 	)
 	if err != nil {
@@ -136,7 +140,7 @@ func evaluateAction(ctx context.Context, client *http.Client, baseURL, runID str
 	return decision, nil
 }
 
-func createRun(ctx context.Context, client *http.Client, baseURL string) (string, error) {
+func createRun(ctx context.Context, client *http.Client, baseURL, requestID string) (string, error) {
 	var response struct {
 		RunID string `json:"run_id"`
 	}
@@ -145,7 +149,7 @@ func createRun(ctx context.Context, client *http.Client, baseURL string) (string
 		"agent_id":    mockAgentID,
 		"environment": environment,
 		"task":        taskSummary,
-	}, http.StatusCreated, &response)
+	}, http.StatusCreated, requestID, &response)
 	if err != nil {
 		return "", err
 	}
@@ -157,7 +161,7 @@ func createRun(ctx context.Context, client *http.Client, baseURL string) (string
 	return response.RunID, nil
 }
 
-func appendEvent(ctx context.Context, client *http.Client, baseURL, runID, eventType string, payload map[string]any) error {
+func appendEvent(ctx context.Context, client *http.Client, baseURL, runID, requestID, eventType string, payload map[string]any) error {
 	return postJSON(
 		ctx,
 		client,
@@ -167,11 +171,12 @@ func appendEvent(ctx context.Context, client *http.Client, baseURL, runID, event
 			"payload":    payload,
 		},
 		http.StatusCreated,
+		requestID,
 		nil,
 	)
 }
 
-func finishRun(ctx context.Context, client *http.Client, baseURL, runID, status, outputSummary string) error {
+func finishRun(ctx context.Context, client *http.Client, baseURL, runID, requestID, status, outputSummary string) error {
 	var response struct {
 		OK bool `json:"ok"`
 	}
@@ -185,6 +190,7 @@ func finishRun(ctx context.Context, client *http.Client, baseURL, runID, status,
 			"output_summary": outputSummary,
 		},
 		http.StatusOK,
+		requestID,
 		&response,
 	)
 	if err != nil {
@@ -197,7 +203,7 @@ func finishRun(ctx context.Context, client *http.Client, baseURL, runID, status,
 	return nil
 }
 
-func postJSON(ctx context.Context, client *http.Client, url string, requestBody any, wantStatus int, responseBody any) error {
+func postJSON(ctx context.Context, client *http.Client, url string, requestBody any, wantStatus int, requestID string, responseBody any) error {
 	body, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)
@@ -208,6 +214,9 @@ func postJSON(ctx context.Context, client *http.Client, url string, requestBody 
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if requestID != "" {
+		req.Header.Set(logging.RequestIDHeader, requestID)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {

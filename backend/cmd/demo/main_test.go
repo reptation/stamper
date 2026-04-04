@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/reptation/stamper/backend/internal/httpapi"
+	"github.com/reptation/stamper/backend/internal/logging"
 	"github.com/reptation/stamper/backend/internal/policy"
 	"github.com/reptation/stamper/backend/internal/storage"
 )
@@ -25,7 +27,15 @@ func TestRunDemoCreatesDenyPathTimeline(t *testing.T) {
 		t.Fatalf("load bundle: %v", err)
 	}
 
-	apiServer := httpapi.NewServer(store)
+	logger, err := logging.NewWithConfig("stamperd", logging.Config{
+		Level:  logging.DefaultLevel,
+		Format: logging.FormatJSON,
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("build test logger: %v", err)
+	}
+
+	apiServer := httpapi.NewServer(store, logger)
 	apiServer.SetPolicyBundle(bundle)
 
 	server := httptest.NewServer(apiServer.Handler())
@@ -45,8 +55,8 @@ func TestRunDemoCreatesDenyPathTimeline(t *testing.T) {
 	if result.Decision.Decision != "deny" {
 		t.Fatalf("expected deny decision, got %q", result.Decision.Decision)
 	}
-	if result.Decision.PolicyID != "POL-NET-001" {
-		t.Fatalf("expected policy id POL-NET-001, got %q", result.Decision.PolicyID)
+	if result.Decision.PolicyID != "deny-all-other-governed-http" {
+		t.Fatalf("expected deny-all-other-governed-http policy id, got %q", result.Decision.PolicyID)
 	}
 
 	run, events, err := store.GetRun(ctx, result.RunID)
@@ -87,8 +97,8 @@ func TestRunDemoCreatesDenyPathTimeline(t *testing.T) {
 	if policyDecisionPayload.Decision != "deny" {
 		t.Fatalf("expected policy decision deny, got %q", policyDecisionPayload.Decision)
 	}
-	if policyDecisionPayload.PolicyID != "POL-NET-001" {
-		t.Fatalf("expected policy id POL-NET-001, got %q", policyDecisionPayload.PolicyID)
+	if policyDecisionPayload.PolicyID != "deny-all-other-governed-http" {
+		t.Fatalf("expected deny-all-other-governed-http policy id, got %q", policyDecisionPayload.PolicyID)
 	}
 }
 

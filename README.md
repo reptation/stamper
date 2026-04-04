@@ -96,10 +96,17 @@ Stamper acts as:
 
 ```bash
 cd backend
-go run ./cmd/stamperd
+LOG_LEVEL=info LOG_FORMAT=json go run ./cmd/stamperd
 ```
 
-### 2. Run the demo agent
+### 2. Start the governed proxy
+
+```bash
+cd backend
+LOG_LEVEL=info LOG_FORMAT=json go run ./cmd/stamper-proxy
+```
+
+### 3. Run the demo agent
 
 ```bash
 cd backend
@@ -108,15 +115,46 @@ go run ./cmd/demo
 
 Example output:
 
-```bash
-run_id=run_960961404dac8d4c decision=deny policy_id=POL-NET-001
+```json
+{"timestamp":"2026-04-04T14:22:18.441Z","level":"info","service":"stamperd","component":"http_handler","request_id":"req_7ff1d77bc8797248","run_id":"run_960961404dac8d4c","message":"run created","agent_id":"mock-agent","environment":"prod","task":"Fetch customer data from external API"}
+{"timestamp":"2026-04-04T14:22:18.444Z","level":"error","service":"stamperd","component":"policy_engine","request_id":"req_7ff1d77bc8797248","run_id":"run_960961404dac8d4c","decision":"deny","policy_id":"deny-all-other-governed-http","policy_name":"Deny all other governed HTTP calls","message":"action denied by policy","tool_name":"governed_http_request"}
 ```
 
-### 3. Inspect runs
+### 4. Inspect runs
 
 ```bash
 curl http://127.0.0.1:8080/v1/runs
 curl http://127.0.0.1:8080/v1/runs/<run_id>
+```
+
+---
+
+## Logging
+
+Both `stamperd` and `stamper-proxy` now emit structured logs with consistent fields:
+
+- `timestamp`
+- `level`
+- `service`
+- `component`
+- `message`
+- `request_id`
+- `run_id`
+- `event_id`
+
+Supported env vars:
+
+```bash
+LOG_LEVEL=debug|info|warn|error
+LOG_FORMAT=json|pretty
+```
+
+`X-Request-ID` is accepted on inbound HTTP requests and echoed back in the response. If it is missing, Stamper generates one. Reuse the same `X-Request-ID` across related run, event, and policy calls when you want a single end-to-end trace.
+
+Example proxy log:
+
+```json
+{"timestamp":"2026-04-04T14:22:20.102Z","level":"error","service":"stamper-proxy","component":"proxy","request_id":"req_7ff1d77bc8797248","run_id":"run_960961404dac8d4c","method":"GET","host":"api.example.com","path":"/customers","decision":"deny","message":"request blocked by policy"}
 ```
 
 ---

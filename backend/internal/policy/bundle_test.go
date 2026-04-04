@@ -14,8 +14,8 @@ func TestLoadBundle(t *testing.T) {
 		t.Fatalf("load bundle: %v", err)
 	}
 
-	if bundle.Version != "v1" {
-		t.Fatalf("expected version v1, got %q", bundle.Version)
+	if bundle.Version != "dev-1" {
+		t.Fatalf("expected version dev-1, got %q", bundle.Version)
 	}
 }
 

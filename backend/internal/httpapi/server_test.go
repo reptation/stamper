@@ -3,17 +3,20 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
+	"github.com/reptation/stamper/backend/internal/logging"
 	"github.com/reptation/stamper/backend/internal/policy"
 	"github.com/reptation/stamper/backend/internal/storage"
 )
 
 func TestHealth(t *testing.T) {
-	server := NewServer(nil)
+	server := NewServer(nil, testLogger(t))
 	req := httptest.NewRequest(http.MethodGet, "/v1/health", nil)
 	rec := httptest.NewRecorder()
 
@@ -34,7 +37,7 @@ func TestHealth(t *testing.T) {
 }
 
 func TestReadyReportsFalseUntilBundleIsLoaded(t *testing.T) {
-	server := NewServer(nil)
+	server := NewServer(nil, testLogger(t))
 	req := httptest.NewRequest(http.MethodGet, "/v1/ready", nil)
 	rec := httptest.NewRecorder()
 
@@ -57,7 +60,7 @@ func TestReadyReportsFalseUntilBundleIsLoaded(t *testing.T) {
 }
 
 func TestReadyReportsBundleVersionAfterLoad(t *testing.T) {
-	server := NewServer(nil)
+	server := NewServer(nil, testLogger(t))
 	server.SetPolicyBundle(&policy.Bundle{Version: "v1"})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/ready", nil)
@@ -538,6 +541,19 @@ func TestListRunsSuccess(t *testing.T) {
 	}
 }
 
+func TestRequestIDIsReturnedInResponseHeaders(t *testing.T) {
+	server := NewServer(nil, testLogger(t))
+	req := httptest.NewRequest(http.MethodGet, "/v1/health", nil)
+	req.Header.Set(logging.RequestIDHeader, "req_test_123")
+	rec := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(rec, req)
+
+	if got := rec.Header().Get(logging.RequestIDHeader); got != "req_test_123" {
+		t.Fatalf("expected request id header to be echoed, got %q", got)
+	}
+}
+
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 
@@ -551,7 +567,7 @@ func newTestServer(t *testing.T) *Server {
 		}
 	})
 
-	return NewServer(store)
+	return NewServer(store, testLogger(t))
 }
 
 func createRun(t *testing.T, server *Server) string {
@@ -615,4 +631,18 @@ func newTestPolicyBundle() *policy.Bundle {
 			},
 		},
 	}
+}
+
+func testLogger(t *testing.T) *slog.Logger {
+	t.Helper()
+
+	logger, err := logging.NewWithConfig("stamperd", logging.Config{
+		Level:  logging.DefaultLevel,
+		Format: logging.FormatJSON,
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("build test logger: %v", err)
+	}
+
+	return logger
 }
